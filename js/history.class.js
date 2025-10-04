@@ -7,9 +7,9 @@ class History {
      * @private
      */
     static #Action = class {
-        /** @type {() => void} */
+        /** @type {() => void|null} */
         doFunc = null;
-        /** @type {() => void} */
+        /** @type {() => void|null} */
         undoFunc = null;
         /** @type {object|null} */
         target = null;
