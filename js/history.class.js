@@ -81,8 +81,8 @@ class History {
     undo() {
         const action = this.stack.pop();
         if (action) {
-            action.undoFunc();
             this.redoStack.push(action);
+            action.undoFunc();
         }
     }
 
@@ -92,8 +92,8 @@ class History {
     redo() {
         const action = this.redoStack.pop();
         if (action) {
-            action.doFunc();
             this.stack.push(action);
+            action.doFunc();
         }
     }
 
@@ -107,3 +107,4 @@ class History {
 }
 
 export default History;
+
