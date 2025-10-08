@@ -12,6 +12,8 @@ class History {
         /** @type {() => void|null} */
         undoFunc = null;
         /** @type {object|null} */
+        doResult = null;
+        /** @type {object|null} */
         target = null;
         /** @type {string|null} */
         parameter = null;
@@ -49,11 +51,11 @@ class History {
     /**
      * Execute a reversible action.
      *
-     * @param {() => void} doFunc            Function that applies the change
-     * @param {() => void} undoFunc          Function that reverts the change
-     * @param {object|null} [target=null]    Object being modified
-     * @param {string|null} [parameter=null] Name of parameter modified
-     * @param {boolean} [coalescing=true]    Whether the next action can overwrite this action if same target+parameter
+     * @param {() => void} doFunc         Function that applies the change
+     * @param {() => void} undoFunc       Function that reverts the change
+     * @param {?object} [target=null]     Object being modified
+     * @param {?string} [parameter=null]  Name of parameter modified
+     * @param {boolean} [coalescing=true] Whether the next action can overwrite this action if same target+parameter
      */
     do(doFunc, undoFunc, target = null, parameter = null, coalescing = true) {
         const action = new History.#Action(doFunc, undoFunc, target, parameter, coalescing);
@@ -62,7 +64,7 @@ class History {
         const replace =
             last &&
             last.coalescing &&
-            last.target === target &&
+            last.target !== null && last.target === target &&
             last.parameter === parameter;
 
         if (replace) {
@@ -72,7 +74,7 @@ class History {
             this.redoStack.length = 0;
         }
 
-        action.doFunc();
+        action.doResult = action.doFunc();
     }
 
     /**
@@ -82,7 +84,7 @@ class History {
         const action = this.stack.pop();
         if (action) {
             this.redoStack.push(action);
-            action.undoFunc();
+            action.undoFunc(action.doResult);
         }
     }
 
@@ -93,7 +95,7 @@ class History {
         const action = this.redoStack.pop();
         if (action) {
             this.stack.push(action);
-            action.doFunc();
+            action.doResult = action.doFunc();
         }
     }
 
