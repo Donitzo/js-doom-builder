@@ -112,6 +112,7 @@ export default class BaseProperties {
             this.export = get('export', true);
             this.alwaysExport = get('alwaysExport', false);
             this.enabled = get('enabled', null);
+            this.packed = padPorts('packed', false);
         }
     }
 
@@ -138,7 +139,7 @@ export default class BaseProperties {
      * @param {Array<BaseProperties.Property>} properties - The property metadata schema.
      */
     static setup(properties) {
-        // Special must be imported before any properties derived from it
+        // Special must be imported before any properties derived from it (applies to any packed property)
         this._properties = [
             ...properties.filter(property => property.key === 'special'),
             ...properties.filter(property => property.key !== 'special'),
@@ -188,6 +189,16 @@ export default class BaseProperties {
                 });
 
                 this._importMap[port].set(key, entry);
+            });
+        });
+
+        MapTransformer.PORTS.forEach(port => {
+            this._importMap[port].forEach(entries => {
+                if (entries.some(entry => entry.bit !== null)) {
+                    entries.forEach(entry => {
+                        entry.property.packed[port] = true;
+                    });
+                }
             });
         });
     }
@@ -449,12 +460,25 @@ export default class BaseProperties {
             }
 
             const key = getKey(property);
+
             if (key === null) {
                 return;
             }
 
             const bit = getBit(property);
+
             if (bit === null) {
+                if (property.packed[port]) {
+                    const value = this.#values.get(property.key);
+
+                    bitBuckets.set(key, value);
+
+                    const exportDefault = getExportDefault(property);
+                    if (includeDefaults || property.alwaysExport || value !== exportDefault) {
+                        exportBitBucket.add(key);
+                    }
+                }
+
                 return;
             }
 
@@ -476,12 +500,18 @@ export default class BaseProperties {
             }
 
             const key = getKey(property);
+
             if (key === null) {
                 return;
             }
 
-            const value = this.#values.get(property.key);
             const bit = getBit(property);
+
+            if (property.packed[port] && bit === null) {
+                return;
+            }
+
+            const value = this.#values.get(property.key);
             const exportDefault = getExportDefault(property);
 
             if (bit !== null) {
