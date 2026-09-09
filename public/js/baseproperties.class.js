@@ -20,27 +20,30 @@ export default class BaseProperties {
             // Bit in UDMF property (can be per-port)
             [udmfKeyBit]: integer / null,
             [udmfKeyBitCount]: integer / 1,
-            [label]: "Label",
-            [tooltip]: "Tooltip",
+            [label]: "Label" / (properties, port) => "Label",
+            [tooltip]: "Tooltip" / (properties, port) => "Tooltip",
             type: "integer/number/string/boolean",
             [step]: 1,
             [isEnum]: false,
-            // Autocomplete
+            // Autocomplete (can be per-port at top level, do not return per-port data)
             [datalist]: [
                 { value: 0, label: "Label 1" },
                 { value: 1, label: "Label 2" },
                 { value: 2, label: "Label 3" }
-            ],
+            ] / (properties, port) => [ ... ],
             // For numbers (can be per-port)
             [range]: [0, 255],
             // For strings (can be per-port)
             [maxLength]: 8,
+            // To show the property for each port
             [ports]: { doom_wad: true, doom_udmf: true, boom_wad: true, ... },
             default: 0,
             [udmfDefault]: default,
             [hidden]: false,
             [export]: true,
             [alwaysExport]: false,
+            // To enable property based on state (disabled properties are not shown, imported or exported)
+            [enabled]: (properties, port) => boolean,
         }]*/
 
         /**
@@ -108,6 +111,7 @@ export default class BaseProperties {
             this.hidden = get('hidden', false);
             this.export = get('export', true);
             this.alwaysExport = get('alwaysExport', false);
+            this.enabled = get('enabled', null);
         }
     }
 
@@ -134,7 +138,11 @@ export default class BaseProperties {
      * @param {Array<BaseProperties.Property>} properties - The property metadata schema.
      */
     static setup(properties) {
-        this._properties = properties;
+        // Special must be imported before any properties derived from it
+        this._properties = [
+            ...properties.filter(property => property.key === 'special'),
+            ...properties.filter(property => property.key !== 'special'),
+        ];
 
         this._propertyByKey = new Map();
 
@@ -145,6 +153,10 @@ export default class BaseProperties {
         });
 
         this._properties.forEach(property => {
+            if (this._propertyByKey.has(property.key)) {
+                throw new Error(`Duplicate property key "${property.key}"`);
+            }
+
             this._propertyByKey.set(property.key, property);
 
             MapTransformer.PORTS.forEach(port => {
@@ -172,6 +184,7 @@ export default class BaseProperties {
                     bitCount: format === 'wad'
                         ? property.wadKeyBitCount[port]
                         : property.udmfKeyBitCount[port],
+                    enabled: property.enabled,
                 });
 
                 this._importMap[port].set(key, entry);
@@ -357,6 +370,7 @@ export default class BaseProperties {
 
         return entries;
     }
+
     /**
      * Restores known property values from serialized key-value pairs.
      *
@@ -429,7 +443,8 @@ export default class BaseProperties {
         };
 
         this.constructor._properties.forEach(property => {
-            if (!property.ports[port] || !property.export) {
+            if (!property.ports[port] || !property.export ||
+                property.enabled !== null && !property.enabled(this, port)) {
                 return;
             }
 
@@ -455,7 +470,8 @@ export default class BaseProperties {
         });
 
         this.constructor._properties.forEach(property => {
-            if (!property.ports[port] || !property.export) {
+            if (!property.ports[port] || !property.export ||
+                property.enabled !== null && !property.enabled(this, port)) {
                 return;
             }
 
@@ -523,13 +539,17 @@ export default class BaseProperties {
             this.#values.set(property.key, defaultValue);
         });
 
-        for (const [key, value] of Object.entries(properties)) {
+        const importValue = (key, value) => {
             const entries = map.get(key.toLowerCase());
             if (entries === undefined) {
-                continue;
+                return;
             }
 
-            for (const { property, bit, bitCount } of entries) {
+            for (const { property, bit, bitCount, enabled } of entries) {
+                if (enabled !== null && !enabled(this, port)) {
+                    continue;
+                }
+
                 if (bit !== null) {
                     const mask = (1 << bitCount) - 1;
                     const unpacked = (value >> bit) & mask;
@@ -541,6 +561,16 @@ export default class BaseProperties {
                 } else {
                     this.#values.set(property.key, value);
                 }
+            }
+        };
+
+        if (Object.hasOwn(properties, 'special')) {
+            importValue('special', properties.special);
+        }
+
+        for (const [key, value] of Object.entries(properties)) {
+            if (key.toLowerCase() !== 'special') {
+                importValue(key, value);
             }
         }
 
@@ -591,24 +621,37 @@ export default class BaseProperties {
 
         const properties = first.constructor._properties;
         properties.forEach(property => {
-            if (!property.ports[port] || property.hidden) {
+            if (!property.ports[port] || property.hidden ||
+                property.enabled !== null &&
+                !propertiesList.every(properties => property.enabled(properties, port))) {
                 return;
             }
 
             const value = first.#values.get(property.key);
             const isMultiValue = this.#isMultiValue(propertiesList, property.key);
 
+            const tooltip = typeof property.tooltip === 'function'
+                ? property.tooltip(first, port)
+                : property.tooltip;
+
             const label = document.createElement('label');
-            label.textContent = property.label;
-            label.title = property.tooltip;
+            label.textContent = typeof property.label === 'function'
+                ? property.label(first, port)
+                : property.label;
+            label.title = tooltip;
             label.htmlFor = `input-${first.constructor.name}-${property.key}`;
 
             const isEnum = property.isEnum[port] === true;
             const input = isEnum ? document.createElement('select') : document.createElement('input');
 
             input.classList.toggle('input--multivalue', isMultiValue);
-            input.title = property.tooltip;
+            input.title = tooltip;
             input.id = `input-${first.constructor.name}-${property.key}`;
+
+            const datalistSource = property.datalist[port];
+            const datalistParsed = typeof datalistSource === 'function'
+                ? datalistSource(first, port)
+                : datalistSource;
 
             if (isEnum) {
                 if (isMultiValue) {
@@ -620,7 +663,7 @@ export default class BaseProperties {
                     input.appendChild(option);
                 }
 
-                property.datalist[port].forEach(entry => {
+                datalistParsed.forEach(entry => {
                     const option = document.createElement('option');
                     option.value = String(entry.value);
                     if (Number.isFinite(entry.value)) {
@@ -648,11 +691,11 @@ export default class BaseProperties {
                 });
             } else {
                 let datalist = null;
-                if (property.datalist[port].length > 0) {
+                if (datalistParsed.length > 0) {
                     datalist = document.createElement('datalist');
                     datalist.id = `datalist-${first.constructor.name}-${property.key}`;
 
-                    property.datalist[port].forEach(entry => {
+                    datalistParsed.forEach(entry => {
                         const option = document.createElement('option');
                         option.value = String(entry.value);
                         option.label = `${entry.label} (${entry.value})`;
@@ -773,12 +816,9 @@ export default class BaseProperties {
         // FNV-1a base
         let h = 2166136261 >>> 0;
 
-        this.constructor._properties.forEach(property => {
-            const value = this.#values.get(property.key);
-
-            switch (property.type) {
+        this.#values.forEach(value => {
+            switch (typeof value) {
                 case 'boolean':
-                case 'integer':
                     h ^= +value;
                     h = Math.imul(h, 16777619);
                     break;
@@ -801,7 +841,7 @@ export default class BaseProperties {
                     break;
 
                 default:
-                    throw new Error(`Unsupported hash type for "${property.key}"`);
+                    throw new Error('Unsupported property value type');
             }
         });
 
