@@ -2,6 +2,8 @@ import MapTransformer from './wad/maptransformer.class.js';
 
 /**
  * Base class which handles properties.
+ *
+ * Special must be added before any properties derived from it (applies to any packed property).
  */
 export default class BaseProperties {
     /**
@@ -139,11 +141,7 @@ export default class BaseProperties {
      * @param {Array<BaseProperties.Property>} properties - The property metadata schema.
      */
     static setup(properties) {
-        // Special must be imported before any properties derived from it (applies to any packed property)
-        this._properties = [
-            ...properties.filter(property => property.key === 'special'),
-            ...properties.filter(property => property.key !== 'special'),
-        ];
+        this._properties = properties;
 
         this._propertyByKey = new Map();
 
