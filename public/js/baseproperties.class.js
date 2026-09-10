@@ -35,6 +35,8 @@ export default class BaseProperties {
             ] / (properties, port) => [ ... ],
             // For numbers (can be per-port)
             [range]: [0, 255],
+            // Input range (not validate) (can be per-port)
+            [displayRange]: [0, 255] / (properties, port) => [0, 255],
             // For strings (can be per-port)
             [maxLength]: 8,
             // To show the property for each port
@@ -106,6 +108,7 @@ export default class BaseProperties {
                 this.range[port][1] = !Number.isFinite(this.range[port][1]) ? hardLimit :
                     Math.min(this.range[port][1], hardLimit);
             });
+            this.displayRange = padPorts('displayRange', get('displayRange', this.range));
             this.maxLength = padPorts('maxLength', get('maxLength', 256));
             this.ports = padPorts('ports', get('ports', true));
             this.default = get('default');
@@ -681,6 +684,9 @@ export default class BaseProperties {
                 ? datalistSource(first, port)
                 : datalistSource;
 
+            let datalist = null;
+            let select = null;
+
             if (isEnum) {
                 if (isMultiValue) {
                     const option = document.createElement('option');
@@ -718,24 +724,14 @@ export default class BaseProperties {
                     changeCallback(property.key, v);
                 });
             } else {
-                let datalist = null;
-                if (datalistParsed.length > 0) {
-                    datalist = document.createElement('datalist');
-                    datalist.id = `datalist-${first.constructor.name}-${property.key}`;
-
-                    datalistParsed.forEach(entry => {
-                        const option = document.createElement('option');
-                        option.value = String(entry.value);
-                        option.label = `${entry.label} (${entry.value})`;
-                        datalist.appendChild(option);
-                    });
-                }
-
                 switch (property.type) {
                     case 'boolean': {
                         input.type = 'checkbox';
+
                         input.checked = isMultiValue ? false : value;
+
                         input.indeterminate = isMultiValue;
+
                         input.addEventListener('change', () => {
                             input.indeterminate = false;
                             changeCallback(property.key, input.checked);
@@ -746,38 +742,97 @@ export default class BaseProperties {
                     case 'integer':
                     case 'number': {
                         input.type = 'number';
-                        const [min, max] = property.range[port];
+
+                        const range = property.displayRange[port];
+                        const [min, max] = typeof range === 'function'
+                            ? range(first, port)
+                            : range;
                         if (Number.isFinite(min)) {
                             input.min = min;
                         }
                         if (Number.isFinite(max)) {
                             input.max = max;
                         }
+
                         input.step = property.type === 'integer' ? '1' : property.step;
+
                         input.value = isMultiValue ? '' : value;
+
+                        input.setAttribute('data-scrubber-pixels-per-step', '2');
+                        input.setAttribute('data-scrubber-vertical', '1');
+
+                        if (datalistParsed.length > 0 && property.type === 'integer') {
+                            select = document.createElement('select');
+                            select.classList.add('input-datalist-select');
+
+                            const customOption = document.createElement('option');
+                            customOption.value = '';
+                            customOption.textContent = isMultiValue ? 'Multiple values' : 'Custom';
+                            select.appendChild(customOption);
+
+                            datalistParsed.forEach(entry => {
+                                const option = document.createElement('option');
+                                option.value = String(entry.value);
+                                option.textContent = `${entry.label} (${entry.value})`;
+                                if (entry.tooltip !== undefined) {
+                                    option.title = entry.tooltip;
+                                }
+                                select.appendChild(option);
+                            });
+
+                            if (!isMultiValue) {
+                                const m = datalistParsed.find(e => String(e.value) === String(value));
+                                select.value = m !== undefined ? String(m.value) : '';
+                            }
+
+                            select.addEventListener('change', () => {
+                                if (select.value === '') {
+                                    return;
+                                }
+
+                                const newValue = parseInt(select.value, 10);
+
+                                input.value = String(newValue);
+
+                                const valid = first.constructor.validate(property.key, newValue, port);
+
+                                input.classList.toggle('input--invalid', !valid);
+
+                                if (valid) {
+                                    changeCallback(property.key, newValue);
+                                }
+                            });
+                        }
+
                         input.addEventListener('change', () => {
                             const number = property.type === 'integer'
                                 ? parseInt(input.value, 10)
                                 : parseFloat(input.value);
+
                             const valid = first.constructor.validate(property.key, number, port);
+
                             input.classList.toggle('input--invalid', !valid);
+
                             if (valid) {
                                 changeCallback(property.key, number);
+
+                                if (select !== null) {
+                                    const m = datalistParsed.find(e => String(e.value) === String(number));
+                                    select.value = m !== undefined ? String(m.value) : '';
+                                }
                             }
                         });
-                        if (datalist !== null) {
-                            input.setAttribute('list', datalist.id);
-                            input.after(datalist);
-                        }
-                        input.setAttribute('data-scrubber-pixels-per-step', '2');
-                        input.setAttribute('data-scrubber-vertical', '1');
+
                         break;
                     }
 
                     case 'string': {
                         input.type = 'text';
+
                         input.maxLength = property.maxLength[port];
+
                         input.value = isMultiValue ? '' : value;
+
                         input.addEventListener('change', () => {
                             const valid = first.constructor.validate(property.key, input.value, port);
                             input.classList.toggle('input--invalid', !valid);
@@ -785,10 +840,23 @@ export default class BaseProperties {
                                 changeCallback(property.key, input.value);
                             }
                         });
-                        if (datalist !== null) {
+
+                        if (datalistParsed.length > 0) {
+                            datalist = document.createElement('datalist');
+                            datalist.id = `datalist-${first.constructor.name}-${property.key}`;
                             input.setAttribute('list', datalist.id);
-                            input.after(datalist);
+
+                            datalistParsed.forEach(entry => {
+                                const option = document.createElement('option');
+                                option.value = String(entry.value);
+                                option.label = `${entry.label} (${entry.value})`;
+                                if (entry.tooltip !== undefined) {
+                                    option.title = entry.tooltip;
+                                }
+                                datalist.appendChild(option);
+                            });
                         }
+
                         break;
                     }
                 }
@@ -803,6 +871,10 @@ export default class BaseProperties {
             valueElement.append(input);
 
             row.append(labelElement, valueElement);
+
+            if (datalist !== null) {
+                input.after(datalist);
+            }
 
             if (first.constructor.name === 'ThingProperties' && property.key === 'type' && !isMultiValue) {
                 const definition = resourceManager.thingDefinitions.find(d => d.id === value);
@@ -826,6 +898,17 @@ export default class BaseProperties {
             }
 
             container.appendChild(row);
+
+            if (select !== null) {
+                const selectRow = document.createElement('tr');
+                const selectElement = document.createElement('td');
+
+                selectElement.append(select);
+
+                selectRow.append(document.createElement('td'), selectElement);
+
+                container.appendChild(selectRow);
+            }
         });
     }
 
